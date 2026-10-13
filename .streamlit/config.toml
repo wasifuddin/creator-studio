@@ -1,6 +1,19 @@
 [theme]
+base = "light"
 primaryColor = "#6d4aff"
-font = "sans serif"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f4f2fa"
+textColor = "#1d1b26"
+borderColor = "#e4e0ef"
+showWidgetBorder = true
+baseRadius = "12px"
+buttonRadius = "10px"
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+headingFontWeights = [800, 700, 700, 600, 600, 600]
+
+[theme.sidebar]
+backgroundColor = "#f7f5fc"
+secondaryBackgroundColor = "#ffffff"
 
 [server]
 maxUploadSize = 20

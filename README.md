@@ -9,6 +9,7 @@ A Streamlit demo of the Risus Studio idea from the R&D doc. It turns one product
 | **① Create** | Add a product photo and name. Pick a look from **visual style cards**, or tap **💡 Give me ideas** to get three AI-suggested concepts for the product. Choose where to post. You get image ads, videos, a hook and a caption with the tracked link. Then use **📦 Prepare share kit** to download everything as one zip, and tick through the **✅ Before you post** checklist. |
 | **② Edit** | Edit an image by describing the change; idea chips are tailored to the creator's niche. Version history lets you go back. Change the headline and button text for free. Make new video takes. Rewrite the caption. |
 | **③ Add sound & finish** | Pick and trim takes, then add a hook and an end card with the creator's link. Add a voice: record your own (the default), use an AI voice, or upload one. Add music: AI-made with Lyria, or your own track. Set the volume, or export silent and add a trending sound in the app. |
+| **🎬 Cinematic ad** | Movie-style commercials (15 or 30s). Add the product photo, pick a feel (Dark & epic, Luxury & elegant, Bold & energetic, Warm & emotional), then describe the idea or paste a full script. The AI writes an **editable storyboard** (each scene has a shot, camera move with sound, and a voiceover line). **🎬 Shoot my film** then films every scene in parallel on Veo 3.1 and records each voiceover line in a cinematic narrator voice. It composes a score with Lyria and edits it all together: lines land on their scenes, plus 2.39:1 cinema bars and a film-title end frame. **🔁 Reshoot** any single scene, or re-cut the sound for free. A 15s film takes about 1–2 min; 30s takes 2–4 min. |
 | **📈 My results** | Sample dashboard: views, clicks, people who joined Risus, the best ads and a creator leaderboard. |
 
 **Sidebar:**
@@ -27,7 +28,8 @@ The creator's niche and main platform set smart defaults: which look comes first
 | Video ads | Google Veo 3.1 Lite / Fast / premium | `GEMINI_API_KEY` | $0.40 / $0.80 / $3.20 |
 | AI voiceover | Gemini 3.8 Flash TTS | `GEMINI_API_KEY` | < $0.01 |
 | AI music | Google Lyria 3 (30s, royalty-free) | `GEMINI_API_KEY` | $0.04 |
-| Final cut | ffmpeg (bundled via `imageio-ffmpeg`) | — | free |
+| Final cut and film editing | ffmpeg (bundled via `imageio-ffmpeg`) | — | free |
+| Cinematic ad (30s, Veo 3.1 Fast) | Storyboard + 6 scenes + voice + score | `GEMINI_API_KEY` | ~ $4–5 |
 | Video ads (optional) | ByteDance Seedance 2.0 (via fal.ai) | `FAL_KEY` | ~ $1.10 |
 | Video ads (optional) | Higgsfield (Kling 2.5 Turbo Pro) | `HIGGSFIELD_API_KEY` (`id:secret`) | ~ $0.55 |
 

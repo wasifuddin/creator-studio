@@ -347,6 +347,10 @@ def suggest_ideas(client: genai.Client, product_jpeg: bytes, name: str, niche: s
 
 def generate_image(client: genai.Client, model: str, product_jpeg: bytes, style: str, aspect: str, direction: str = "") -> Media:
     prompt = f"{AD_STYLES[style]['image']} {f'Creative direction: {direction}. ' if direction else ''}{KEEP_PRODUCT}"
+    return render_still(client, model, product_jpeg, prompt, aspect)
+
+
+def render_still(client: genai.Client, model: str, product_jpeg: bytes, prompt: str, aspect: str) -> Media:
     t0 = time.time()
     try:
         resp = client.models.generate_content(
@@ -412,6 +416,10 @@ VOICES = {
     "Charon": "Informative",
     "Fenrir": "Excitable",
     "Zephyr": "Bright",
+    "Algenib": "Gravelly, trailer-style",
+    "Gacrux": "Mature and deep",
+    "Orus": "Bold and firm",
+    "Enceladus": "Breathy and intimate",
 }
 
 MUSIC_MOODS = {
@@ -446,12 +454,12 @@ def synthesize_voice(client: genai.Client, script: str, voice: str) -> tuple[byt
     return _interaction_audio(it)
 
 
-def generate_music(client: genai.Client, mood: str) -> tuple[bytes, str]:
+def generate_music(client: genai.Client, mood: str, context: str = "a short social media product ad") -> tuple[bytes, str]:
     """A 30-second royalty-free instrumental clip from Lyria 3."""
     try:
         it = client.interactions.create(
             model=MUSIC_MODEL,
-            input=f"{mood}. Background music for a short social media product ad. Instrumental only, no vocals.",
+            input=f"{mood}. Music for {context}. Instrumental only, no vocals.",
         )
     except Exception as err:
         raise StudioError(_gemini_error(err)) from err
@@ -469,8 +477,11 @@ def video_prompt(style: str, direction: str = "") -> str:
 
 
 def generate_video(engine: str, keys: Keys, still: bytes, still_mime: str, prompt: str, aspect: str,
-                   on_progress: Progress | None = None, timeout: int = 600) -> Media:
+                   on_progress: Progress | None = None, timeout: int = 600, seconds: float | None = None) -> Media:
     spec = VIDEO_ENGINES[engine]
+    if seconds and spec["provider"] == "gemini":
+        # Shorter clips render faster; Veo accepts 4, 6 or 8 seconds.
+        spec = {**spec, "seconds": next(n for n in (4, 6, 8) if n >= min(seconds, 8))}
     if not keys.has(spec["provider"]):
         raise StudioError(f"{spec['label']} needs its API key. Add it in the app secrets.")
     t0 = time.time()
@@ -600,3 +611,114 @@ def _higgsfield(spec, keys, still, mime, prompt, aspect, progress, deadline) -> 
     if not url:
         raise StudioError("Higgsfield finished but returned no video.")
     return requests.get(url, timeout=120).content
+
+
+# ---------------------------------------------------------------------------
+# Cinematic films: brief or script → storyboard → scenes → edited commercial
+# ---------------------------------------------------------------------------
+TONES = {
+    "epic": {
+        "name": "Dark & epic",
+        "blurb": "Moody, high-contrast, slow motion, a big beat drop. Think sportswear launches.",
+        "look": "dark moody high-contrast lighting, deep blacks, hard rim light, teal-and-orange colour grade, "
+                "anamorphic lens, film grain, shallow depth of field",
+        "music": "Dark cinematic trailer score: low ambient drone and heartbeat, rising tension, then a heavy bass "
+                 "beat drop with big percussion, ending on one final deep hit",
+        "voice": "Algenib",
+    },
+    "luxury": {
+        "name": "Luxury & elegant",
+        "blurb": "Soft golden light, silk, slow graceful camera. Think perfume and jewellery.",
+        "look": "soft warm golden light, silky textures, elegant reflections, creamy highlights, gentle haze, "
+                "slow graceful camera, rich warm colour grade, shallow depth of field",
+        "music": "Elegant slow cinematic piano and strings, airy and luxurious, gentle swell, soft ending",
+        "voice": "Enceladus",
+    },
+    "energy": {
+        "name": "Bold & energetic",
+        "blurb": "Vivid colour, speed ramps, fast cuts. Think energy drinks and streetwear.",
+        "look": "vivid saturated colours, punchy contrast, dynamic speed-ramped camera, motion blur, bold neon "
+                "accents, crisp commercial finish",
+        "music": "High-energy electronic hip-hop beat with punchy drums and bass, fast tempo, hard drop, confident",
+        "voice": "Orus",
+    },
+    "warm": {
+        "name": "Warm & emotional",
+        "blurb": "Natural light, human moments, a gentle build. Think tech and family brands.",
+        "look": "warm natural window light, soft contrast, real-life moments, gentle handheld camera, "
+                "nostalgic warm colour grade, soft focus background",
+        "music": "Warm emotional acoustic score with soft piano and guitar, gently building, hopeful ending",
+        "voice": "Gacrux",
+    },
+}
+FILM_LENGTHS = {15: 3, 30: 6}  # total seconds → number of scenes (plus an end card)
+
+
+def write_storyboard(client: genai.Client, product_jpeg: bytes, name: str, tone: str, length: int,
+                     brief: str = "", tagline: str = "") -> dict:
+    """Turn a brief (or a pasted script) into shot-by-shot scenes a video model can film."""
+    t = TONES[tone]
+    n = FILM_LENGTHS.get(length, 6)
+    shot_total = max(n * 3, length - 3)
+    prompt = (
+        "You are the director of a cinematic TV commercial, like a big sportswear or luxury brand launch. "
+        f"The product is in the photo (name: {name or 'the product'}). Tone: {t['name']} ({t['look']}). "
+        f"Plan exactly {n} scenes that add up to about {shot_total} seconds, followed by an end card. "
+        "Each scene is filmed separately by an image-to-video AI from a still of the real product, so: keep the "
+        "product the hero of every shot; describe what the still looks like (setting, lighting, product position) "
+        "and, separately, the camera move, action and sound effects; vary the shots (macro details, hero angle, "
+        "impact moment, different worlds); no people's faces in close-up, no on-screen text, no logos added. "
+        "Voiceover: short, punchy lines (max 7 words), some scenes can be silent. Scene lengths 3 to 6 seconds. "
+        f"End card: the product name and a short tagline{f' (use: {tagline})' if tagline else ''}. "
+        + (f"Follow this creative brief or script as closely as possible, adapting it to the rules above: {brief}. "
+           if brief.strip() else "Invent a bold, memorable concept with a clear build-up and payoff. ")
+        + "Return JSON."
+    )
+    schema = {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string", "description": "Film title, 2-5 words"},
+            "music": {"type": "string", "description": "Music direction for the whole film, one sentence"},
+            "scenes": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "2-3 word scene name"},
+                        "seconds": {"type": "integer"},
+                        "shot": {"type": "string", "description": "What the still frame shows: setting, light, "
+                                                                  "product position. One or two sentences."},
+                        "motion": {"type": "string", "description": "Camera move, action and sound effects"},
+                        "vo": {"type": "string", "description": "Voiceover line, or empty"},
+                    },
+                    "required": ["name", "seconds", "shot", "motion", "vo"],
+                },
+            },
+            "end_headline": {"type": "string"},
+            "end_tagline": {"type": "string"},
+        },
+        "required": ["title", "music", "scenes", "end_headline", "end_tagline"],
+    }
+    try:
+        resp = client.models.generate_content(
+            model=COPY_MODEL,
+            contents=[types.Part.from_bytes(data=product_jpeg, mime_type="image/jpeg"), prompt],
+            config=types.GenerateContentConfig(response_mime_type="application/json", response_schema=schema),
+        )
+        board = json.loads(resp.text)
+    except Exception as err:
+        raise StudioError(_gemini_error(err)) from err
+    for sc in board["scenes"]:
+        sc["seconds"] = int(min(6, max(3, sc.get("seconds") or 4)))
+    board["scenes"] = board["scenes"][:8]
+    return board
+
+
+def scene_still_prompt(shot: str, tone: str) -> str:
+    return (f"Cinematic commercial film still: {shot}. Look: {TONES[tone]['look']}. Photorealistic, shot on a cinema "
+            f"camera, premium TV commercial quality, no text, no captions, no watermark. {KEEP_PRODUCT}")
+
+
+def scene_motion_prompt(motion: str, tone: str) -> str:
+    return (f"{motion}. Cinematic TV commercial, {TONES[tone]['look']}. The product stays accurate and unchanged. "
+            "No on-screen text or captions.")

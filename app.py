@@ -1,6 +1,6 @@
 """Risus Studio — product ad generator for Risus creators (Streamlit).
 
-Flow: ① Create → ② Edit → ③ Add sound & finish → 📈 My results.
+Pages: ✨ Create · ✏️ Edit · 🎚️ Finish · 🎬 Cinematic ad · 📈 Results.
 Run locally:  streamlit run app.py
 Secrets (or env vars): GEMINI_API_KEY, optional FAL_KEY, HIGGSFIELD_API_KEY and APP_PASSWORD (access code).
 """
@@ -10,6 +10,7 @@ import hmac
 import io
 import os
 import random
+import threading
 import re
 import time
 import uuid
@@ -33,7 +34,14 @@ st.set_page_config(page_title="Risus Studio", page_icon="🎬", layout="wide")
 
 ASSETS = Path(__file__).parent / "assets"
 PROVIDER_KEY_NAME = {"gemini": "GEMINI_API_KEY", "fal": "FAL_KEY", "higgsfield": "HIGGSFIELD_API_KEY"}
-NAV = ["① Create", "② Edit", "③ Add sound & finish", "📈 My results"]
+NAV = ["✨ Create", "✏️ Edit", "🎚️ Finish", "🎬 Cinematic ad", "📈 Results"]
+PAGE_HINTS = [
+    "Turn a product photo into ready-to-post image and video ads with a caption and your link.",
+    "Change an image by describing it, make new video takes, or rewrite the caption.",
+    "Add your voice or music, a hook and an end card, then export the finished ad.",
+    "Make a movie-style commercial: storyboard, scenes, voiceover, score and end title.",
+    "See how your ads perform: views, clicks and the people who joined through your link.",
+]
 DEFAULT_ACCENT = "#6d4aff"
 SAMPLE = {"name": "Glow Serum 30ml", "offer": "20% off this week"}
 MOTION_IDEAS = ["Slower, smoother camera", "Orbit around the product", "Add sparkle and light flares",
@@ -43,10 +51,10 @@ DEFAULT_PROFILE = {"name": "Maya", "handle": "maya", "niche": "Beauty & skincare
 
 TIPS = [
     "Tip: the first 2 seconds decide if people keep watching, so lead with your hook.",
-    "Tip: your own voice builds more trust than an AI voice. Try recording it in step ③.",
+    "Tip: your own voice builds more trust than an AI voice. Try recording it in 🎚️ Finish.",
     "Tip: post the 9:16 video to TikTok and Reels, and the square image to your feed.",
     "Tip: every ad carries your tracked Risus link, so you get credit for everyone you bring.",
-    "Tip: you can edit any image just by describing the change in step ②.",
+    "Tip: you can edit any image just by describing the change in ✏️ Edit.",
     "Tip: always switch on the platform's AI label when posting. It protects your account.",
 ]
 CHECKLIST = [
@@ -63,16 +71,34 @@ FAQ = {
                                              "audience's trust.",
     "Will the AI change my product?": "It always starts from your real photo and is told to keep the shape, colours, "
                                       "logo and text. Still, check every ad before you post it.",
-    "Can I use my own voice or music?": "Yes, in step ③. Record your voice right in the browser, or upload your own "
+    "Can I use my own voice or music?": "Yes, in 🎚️ Finish. Record your voice right in the browser, or upload your own "
                                         "audio. Only upload music you have the rights to use in ads.",
     "What is my Risus link for?": "Every ad and caption carries it, so Risus can see who joined because of you.",
+    "How do cinematic ads work?": "In 🎬 Cinematic ad, describe your idea (or paste a script). The AI writes a "
+                                  "storyboard, films every scene from your product photo, adds the voiceover, "
+                                  "music and end title, and edits it into a movie-style commercial.",
     "Where are my ads saved?": "In your Risus Studio library. They're still here when you come back.",
 }
 
 st.markdown(
     """
     <style>
-      .block-container { padding-top: 2rem; max-width: 1400px; }
+      .block-container { padding-top: 2.2rem; max-width: 1360px; }
+      [data-testid="stDecoration"], footer { display: none !important; }
+      .app-title { font-size: 30px; font-weight: 800; letter-spacing: -0.02em; margin: 0 0 10px; }
+      .page-hint { color: #6b6779; font-size: 14px; margin: 6px 0 18px; }
+      /* Step bar stays visible while scrolling long pages. */
+      .st-key-navbar { position: sticky; top: 3.75rem; z-index: 90; background: #ffffff; padding: 6px 0 2px;
+                       margin-top: -6px; }
+      .st-key-navbar button { padding: 0.45rem 0.95rem; font-weight: 600; }
+      [data-testid="stImage"] img, [data-testid="stVideo"] video { border-radius: 10px; }
+      [data-testid="stBaseButton-primary"] { font-weight: 600; transition: transform .12s ease, box-shadow .12s ease; }
+      [data-testid="stBaseButton-primary"]:hover { transform: translateY(-1px);
+                                                  box-shadow: 0 6px 16px rgb(109 74 255 / 28%); }
+      .profile { display: flex; align-items: center; gap: 10px; }
+      .avatar { width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg, #6d4aff, #b06bff);
+                color: #fff; font-weight: 700; display: grid; place-items: center; flex: none; }
+      h4 { margin-top: 0.6rem !important; }
       .ai-pill { display:inline-block; background:#17151f; color:#fff; font-size:11px; font-weight:600;
                  padding:2px 8px; border-radius:6px; margin-right:6px; }
       .meta { color:#6b6779; font-size:13px; }
@@ -83,6 +109,10 @@ st.markdown(
       /* Style cards stay in one row and scroll sideways on phones instead of stacking. */
       .st-key-styles [data-testid="stHorizontalBlock"] { flex-wrap: nowrap !important; overflow-x: auto; }
       .st-key-styles [data-testid="stColumn"] { min-width: 128px !important; }
+      .st-key-tones [data-testid="stHorizontalBlock"], .st-key-scenes [data-testid="stHorizontalBlock"] {
+        flex-wrap: nowrap !important; overflow-x: auto; }
+      .st-key-tones [data-testid="stColumn"] { min-width: 170px !important; }
+      .st-key-scenes [data-testid="stColumn"] { min-width: 150px !important; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -129,6 +159,8 @@ def start_session() -> None:
     ss.uid = STUDIO_ID
     ss.profile = {**DEFAULT_PROFILE, **data.get("profile", {})}
     ss.campaigns = data.get("campaigns", [])
+    ss.films = data.get("films", [])
+    ss.active_film = ss.films[0]["id"] if ss.films else None
     ss.active = ss.campaigns[0]["id"] if ss.campaigns else None
     ss.nav = NAV[0]
     ss.p_formats = list(PLATFORMS[ss.profile.get("platform", "Instagram")])
@@ -298,9 +330,11 @@ def persist() -> None:
                tuple(sorted((a, len(d)) for a, d in c["finals"].items())), repr(c["copy"]), c["overlay"],
                len((c.get("ai_voice") or {}).get("data", b"")), len((c.get("ai_music") or {}).get("data", b"")))
               for c in ss.campaigns),
+        tuple((f["id"], len(f.get("final") or b""), tuple(len(sc.get("video") or b"") for sc in f["scenes"]))
+              for f in ss.films),
     ))
     if ss.get("_saved_fp") != fp:
-        store.save(STUDIO_ID, {"profile": ss.profile, "campaigns": ss.campaigns})
+        store.save(STUDIO_ID, {"profile": ss.profile, "campaigns": ss.campaigns, "films": ss.films})
         ss._saved_fp = fp
 
 
@@ -322,8 +356,10 @@ def reset_studio() -> None:
 with st.sidebar:
     st.markdown("## 🎬 Risus Studio")
     with st.container(border=True):
-        st.markdown(f"**👤 {PROFILE.get('name') or HANDLE}**")
-        st.caption(f"@{HANDLE} · {PROFILE.get('niche', '')}")
+        initials = "".join(w[0] for w in (PROFILE.get("name") or HANDLE).split()[:2]).upper()
+        st.markdown(f"<div class='profile'><div class='avatar'>{initials}</div><div><b>{PROFILE.get('name') or HANDLE}"
+                    f"</b><br><span class='meta'>@{HANDLE} · {PROFILE.get('niche', '')}</span></div></div>",
+                    unsafe_allow_html=True)
         st.caption("Your Risus link")
         st.code(f"risus.app/r/{HANDLE}", language=None)
 
@@ -378,14 +414,16 @@ def _keep_nav() -> None:
 
 
 first_name = (PROFILE.get("name") or HANDLE).split()[0]
-st.title(f"Hi {first_name}! 👋")
-step = st.segmented_control("Step", NAV, key="nav", label_visibility="collapsed", on_change=_keep_nav)
+st.markdown(f"<div class='app-title'>Hi {first_name} 👋</div>", unsafe_allow_html=True)
+with st.container(key="navbar"):
+    step = st.segmented_control("Step", NAV, key="nav", label_visibility="collapsed", on_change=_keep_nav)
 step = step or ss.get("last_step", NAV[0])
 ss.last_step = step
+st.markdown(f"<div class='page-hint'>{PAGE_HINTS[NAV.index(step)]}</div>", unsafe_allow_html=True)
 
 
 # ===========================================================================
-# ① CREATE
+# ✨ CREATE
 # ===========================================================================
 def use_sample() -> None:
     ss.sample_on = True
@@ -428,6 +466,11 @@ def page_create() -> None:
                 w1.markdown("**Let's make your first ad.** Add a product, pick a look and post it. It takes about a "
                             "minute, and you don't need a camera.")
                 w2.button("▶ Try a sample product", type="primary", on_click=use_sample, width="stretch")
+            with st.container(border=True):
+                c1, c2 = st.columns([3, 1], vertical_alignment="center")
+                c1.markdown("**Want a movie-style commercial?** Describe your idea and get a 15 or 30-second "
+                            "cinematic ad with scenes, voiceover, music and an end title.")
+                c2.button("🎬 Make a cinematic ad", on_click=goto, args=(NAV[3],), width="stretch")
         create_form()
 
 
@@ -626,13 +669,15 @@ def gallery(camp: dict) -> None:
         return
     cols = st.columns([COL_WEIGHT[i["aspect"]] for i in items], gap="medium")
     for col, it in zip(cols, items):
-        with col:
+        with col.container(border=True):
             if it["kind"] == "image":
                 st.image(it["data"], width="stretch")
             else:
                 st.video(it["data"], format="video/mp4", loop=True, autoplay=True, muted=True)
-            st.markdown(f"<span class='ai-pill'>AI-generated</span><b>{item_title(it)}</b><br>"
-                        f"<span class='meta'>Made in {it['seconds']:.0f}s</span>", unsafe_allow_html=True)
+            version = f"v{it['v_idx'] + 1}" if it["kind"] == "image" else it["label"]
+            st.markdown(f"<b>{FORMATS[it['aspect']]}</b> <span class='ai-pill'>AI</span><br>"
+                        f"<span class='meta'>{it['aspect']} {it['kind']} · {version} · made in {it['seconds']:.0f}s"
+                        f"</span>", unsafe_allow_html=True)
             name = f"risus-{slug(camp['product'])}-{camp['style']}-{it['aspect'].replace(':', 'x')}-{it['id']}"
             st.download_button("⬇ Download", it["data"], file_name=f"{name}.{'jpg' if it['kind'] == 'image' else 'mp4'}",
                                mime="image/jpeg" if it["kind"] == "image" else "video/mp4",
@@ -655,13 +700,13 @@ def gallery(camp: dict) -> None:
 
 
 # ===========================================================================
-# ② EDIT
+# ✏️ EDIT
 # ===========================================================================
 def page_edit() -> None:
     camp = pick_campaign()
     if not camp:
-        st.info("Make your first ads in ① Create. They'll appear here for editing.")
-        st.button("Go to ① Create", on_click=goto, args=(NAV[0],), type="primary")
+        st.info("Make your first ads in ✨ Create. They'll appear here for editing.")
+        st.button("Go to ✨ Create", on_click=goto, args=(NAV[0],), type="primary")
         return
 
     tab_img, tab_vid, tab_copy = st.tabs(["🖼️ Edit images", "🎬 Remix videos", "✍️ Edit caption"])
@@ -744,7 +789,7 @@ def page_edit() -> None:
                         n = len(videos_of(camp, it["aspect"])) + 1
                         if make_video(camp, it["raw"], it["mime"], it["aspect"], eng,
                                       studio.video_prompt(camp["style"], camp["direction"]), f"Take {n}"):
-                            st.toast("New video added! Find it in Remix videos or ③ Add sound & finish.", icon="🎬")
+                            st.toast("New video added! Find it in Remix videos or 🎚️ Finish.", icon="🎬")
                             st.rerun()
 
     with tab_vid:
@@ -775,7 +820,7 @@ def page_edit() -> None:
                 if img_match and img_match["v_idx"] > 0:
                     use_latest = st.toggle(f"Start from my edited image (v{img_match['v_idx'] + 1})", value=True,
                                            key=f"latest-{v['id']}")
-                st.caption("You keep this take too, so you can compare them in ③.")
+                st.caption("You keep this take too, so you can compare them in 🎚️ Finish.")
                 if eng and st.button("🔁 Make a new take", type="primary", disabled=not change.strip(),
                                      key=f"remix-go-{v['id']}"):
                     src_raw, src_mime = ((img_match["raw"], img_match["mime"]) if use_latest
@@ -818,13 +863,13 @@ def page_edit() -> None:
 
 
 # ===========================================================================
-# ③ ADD SOUND & FINISH
+# 🎚️ FINISH (sound & final cut)
 # ===========================================================================
 def page_cut() -> None:
     camp = pick_campaign()
     if not camp or not videos_of(camp):
-        st.info("You need at least one video. Make one in ① Create, or turn an image into a video in ② Edit.")
-        st.button("Go to ① Create", on_click=goto, args=(NAV[0],), type="primary")
+        st.info("You need at least one video. Make one in ✨ Create, or turn an image into a video in ✏️ Edit.")
+        st.button("Go to ✨ Create", on_click=goto, args=(NAV[0],), type="primary")
         return
     cid = camp["id"]
     copy = camp["copy"] or {}
@@ -847,7 +892,7 @@ def page_cut() -> None:
                                     format_func=lambda i: next(x for x in vids if x["id"] == i)["label"],
                                     key=f"clips-{cid}-{aspect}")
         else:
-            st.caption("Make more takes in ② Edit → Remix videos to combine them here.")
+            st.caption("Make more takes in ✏️ Edit → Remix videos to combine them here.")
         clips, total = [], 0.0
         for vid_id in chosen:
             v = next(x for x in vids if x["id"] == vid_id)
@@ -983,6 +1028,360 @@ def page_cut() -> None:
 
 
 # ===========================================================================
+# 🎬 CINEMATIC AD: brief → storyboard → scenes → edited commercial
+# ===========================================================================
+QUALITY = {
+    "veo-fast": "High · Veo 3.1 Fast (recommended)",
+    "veo-lite": "Standard · Veo 3.1 Lite (fastest)",
+    "veo-premium": "Premium · Veo 3.1 (slowest, finest detail)",
+}
+FILM_FORMATS = {"16:9": "YouTube & TV · 16:9", "9:16": "TikTok & Reels · 9:16"}
+VEO_SLOTS = threading.Semaphore(3)  # how many scenes film at once
+
+
+def film_by_id(fid: str | None) -> dict | None:
+    return next((f for f in ss.films if f["id"] == fid), None)
+
+
+def with_retry(fn, tries: int = 3):
+    """Retry briefly when the provider is rate-limiting (several scenes are filmed at once)."""
+    for attempt in range(tries):
+        try:
+            return fn()
+        except studio.StudioError as err:
+            if "rate limit" not in str(err).lower() or attempt == tries - 1:
+                raise
+            time.sleep(20 * (attempt + 1))
+
+
+def shoot_scene(product_jpeg: bytes, scene: dict, tone: str, aspect: str, engine: str, new_still: bool = True) -> dict:
+    """Still frame from the real product, then the moving shot. Returns the updated scene fields."""
+    if new_still or not scene.get("still"):
+        still = with_retry(lambda: studio.render_still(client, image_model, product_jpeg,
+                                                       studio.scene_still_prompt(scene["shot"], tone), aspect))
+        scene_still, scene_mime = still.data, still.mime
+    else:
+        scene_still, scene_mime = scene["still"], scene["still_mime"]
+    with VEO_SLOTS:
+        vid = with_retry(lambda: studio.generate_video(engine, KEYS, scene_still, scene_mime,
+                                                       studio.scene_motion_prompt(scene["motion"], tone), aspect,
+                                                       seconds=scene["seconds"]))
+    duration, _ = editor.probe(vid.data)
+    return {"still": scene_still, "still_mime": scene_mime, "video": vid.data, "duration": duration, "error": ""}
+
+
+def assemble_film(film: dict) -> None:
+    """Cut the scenes to length, place each voiceover line on its scene, score it and add the end title."""
+    clips, starts, t = [], [], 0.0
+    for sc in film["scenes"]:
+        if not sc.get("video"):
+            continue
+        length = min(float(sc["seconds"]), sc.get("duration") or sc["seconds"])
+        clips.append(editor.Clip(sc["video"], 0.0, length))
+        starts.append((sc, t))
+        t += length
+    if not clips:
+        raise editor.EditorError("No scenes were filmed, so there's nothing to edit yet.")
+    parts, free_at = [], 0.0
+    if film["mix"]["voice_on"]:
+        for sc, start in starts:
+            vo = film["vo"].get(sc["key"])
+            if vo:
+                at = max(start + 0.25, free_at + 0.15)  # never talk over the previous line
+                parts.append((vo, at))
+                free_at = at + editor.probe(vo)[0]
+    hero = next(sc for sc in reversed(film["scenes"]) if sc.get("still"))
+    mix = film["mix"]
+    film["final"] = editor.render_final(
+        clips, film["aspect"],
+        end_card={"still": hero["still"], "headline": film["end_headline"], "cta": film["tagline"], "film": True},
+        music=film.get("music"), voice_parts=parts,
+        vol_original=mix["scene"], vol_voice=mix["voice"], vol_music=mix["music"],
+        letterbox=mix["bars"] and film["aspect"] == "16:9",
+    )
+
+
+def film_caption(film: dict) -> str:
+    link = tracked_link(film["product"], "film", film["aspect"])
+    return f"{film['end_headline']}. {film['tagline']}.\n\nShop it on Risus 👉 {link}\n\n#ad #AIgenerated"
+
+
+def use_film_sample() -> None:
+    ss.f_sample = True
+    ss.f_name = "Aero Runner"
+
+
+def use_film_own_photo() -> None:
+    ss.f_sample = False
+
+
+def pick_tone(key: str) -> None:
+    ss.f_tone = key
+
+
+def page_film() -> None:
+    ss.setdefault("films", [])
+    film = film_by_id(ss.get("active_film")) or (ss.films[0] if ss.films else None)
+    if film:
+        if len(ss.films) > 1:
+            ids = [f["id"] for f in ss.films]
+            ss.active_film = st.selectbox("Your cinematic ads", ids, index=ids.index(film["id"]),
+                                          format_func=lambda i: f"{film_by_id(i)['title']} · {film_by_id(i)['created']}")
+            film = film_by_id(ss.active_film)
+        show_film(film)
+        st.divider()
+        with st.expander("🎬 Make another cinematic ad", expanded=False):
+            film_form()
+    else:
+        st.markdown("Turn one product photo into a **movie-style commercial**. The AI writes the storyboard, films "
+                    "every scene, adds the voiceover, music and end title, and edits it all together.")
+        film_form()
+
+
+def film_form() -> None:
+    ss.setdefault("f_sample", False)
+    ss.setdefault("f_tone", "epic")
+    ss.setdefault("f_board_ver", 0)
+    ss.setdefault("f_tagline", "Available now")
+
+    section("1", "Your product")
+    left, right = st.columns([3, 1], gap="large")
+    with left:
+        product_jpeg = None
+        if ss.f_sample:
+            product_jpeg = studio.prepare_product((ASSETS / "sample_sneaker.jpg").read_bytes())
+            st.info("Using the sample running shoe.", icon="🧪")
+            st.button("Use my own photo instead", key="f-own", on_click=use_film_own_photo)
+        else:
+            up = st.file_uploader("Product photo", type=["jpg", "jpeg", "png", "webp"], key="f_upload",
+                                  help="One clear photo of the product. Every scene is built around it.")
+            if up:
+                try:
+                    product_jpeg = studio.prepare_product(up.getvalue())
+                except studio.StudioError as err:
+                    st.error(str(err))
+            st.button("or try a sample running shoe", key="f-sample", on_click=use_film_sample)
+        a, b = st.columns(2)
+        name = a.text_input("Product name", key="f_name", placeholder="Air Runner 2")
+        tagline = b.text_input("End line", key="f_tagline")
+    with right:
+        if product_jpeg:
+            st.image(product_jpeg, caption="Your product", width="stretch")
+
+    section("2", "The feel")
+    tcols = st.container(key="tones").columns(len(studio.TONES))
+    for col, (key, tone) in zip(tcols, studio.TONES.items()):
+        with col.container(border=True):
+            st.markdown(f"**{tone['name']}**")
+            st.caption(tone["blurb"])
+            chosen = ss.f_tone == key
+            st.button("✓ Chosen" if chosen else "Choose", key=f"tone-{key}", on_click=pick_tone, args=(key,),
+                      type="primary" if chosen else "secondary", width="stretch")
+    c1, c2, c3 = st.columns(3)
+    length = c1.segmented_control("Length", [15, 30], default=30, key="f_len", format_func=lambda n: f"{n} seconds")
+    aspect = c2.segmented_control("Format", list(FILM_FORMATS), default="16:9", key="f_aspect",
+                                  format_func=lambda a: FILM_FORMATS[a])
+    engines = [k for k in QUALITY if KEYS.has(VIDEO_ENGINES[k]["provider"])]
+    engine = c3.selectbox("Quality", engines, format_func=lambda k: QUALITY[k], key="f_engine")
+    length, aspect = length or 30, aspect or "16:9"
+
+    section("3", "Your idea")
+    brief = st.text_area("Describe the idea, or paste a full script (optional)", key="f_brief", height=110,
+                         placeholder="e.g. Starts in total darkness, a beam of light reveals the shoe, builds to a "
+                                     "slow-motion splash on wet asphalt, ends on a hero shot.")
+    if st.button("📝 Write my storyboard", type="primary", disabled=not product_jpeg):
+        with st.spinner("Writing the storyboard…"):
+            try:
+                ss.f_board = studio.write_storyboard(client, product_jpeg, name, ss.f_tone, length, brief, tagline)
+                ss.f_board_ver += 1
+            except studio.StudioError as err:
+                st.error(str(err))
+    if not product_jpeg:
+        st.caption("Add a product photo (or use the sample) to start.")
+
+    if ss.get("f_board") and product_jpeg:
+        storyboard_editor(ss.f_board, product_jpeg, name, tagline, engine, aspect)
+
+
+def storyboard_editor(board: dict, product_jpeg: bytes, name: str, tagline: str, engine: str, aspect: str) -> None:
+    v = ss.f_board_ver
+    tone = ss.f_tone
+    st.divider()
+    section("4", "Your storyboard")
+    st.caption("Edit anything you like. Each card is one shot, filmed from your product photo.")
+    title = st.text_input("Film title", value=board["title"], key=f"sb{v}-title")
+    scenes = []
+    for i, sc in enumerate(board["scenes"]):
+        with st.container(border=True):
+            h1, h2 = st.columns([4, 1], vertical_alignment="center")
+            h1.markdown(f"**Scene {i + 1} · {sc['name']}**")
+            secs = h2.number_input("Seconds", 3, 6, int(sc["seconds"]), key=f"sb{v}-{i}-sec")
+            s1, s2 = st.columns(2)
+            shot = s1.text_area("What we see", value=sc["shot"], key=f"sb{v}-{i}-shot", height=95)
+            motion = s2.text_area("Camera, action & sound", value=sc["motion"], key=f"sb{v}-{i}-motion", height=95)
+            vo = st.text_input("Voiceover (leave empty for silence)", value=sc["vo"], key=f"sb{v}-{i}-vo")
+            scenes.append({"key": f"s{i}", "name": sc["name"], "seconds": int(secs), "shot": shot, "motion": motion,
+                           "vo": vo.strip()})
+    e1, e2 = st.columns(2)
+    end_headline = e1.text_input("End title", value=board["end_headline"] or name, key=f"sb{v}-endh")
+    end_tag = e2.text_input("End line", value=board["end_tagline"] or tagline, key=f"sb{v}-endt")
+    m1, m2 = st.columns([3, 2])
+    music = m1.text_input("Music", value=f"{studio.TONES[tone]['music']}. {board['music']}", key=f"sb{v}-music")
+    voices = list(studio.VOICES)
+    voice = m2.selectbox("Narrator voice", voices, index=voices.index(studio.TONES[tone]["voice"]),
+                         format_func=lambda k: f"{k} · {studio.VOICES[k]}", key=f"sb{v}-voice")
+
+    total = sum(s["seconds"] for s in scenes) + editor.END_CARD_SECONDS
+    st.markdown(f"**{len(scenes)} scenes + end title · about {total:.0f} seconds** · filming takes about 2–4 minutes")
+    if st.button("🎬 Shoot my film", type="primary", width="stretch"):
+        film = {
+            "id": new_id(), "title": title or "Untitled film", "product": name or "Product", "tagline": end_tag,
+            "end_headline": end_headline, "tone": tone, "aspect": aspect, "engine": engine, "voice": voice,
+            "music_prompt": music, "product_jpeg": product_jpeg, "scenes": scenes, "vo": {}, "music": None,
+            "final": None, "created": datetime.now().strftime("%b %d, %H:%M"),
+            "mix": {"scene": 0.35, "voice": 1.0, "music": 0.6, "bars": True, "voice_on": True},
+        }
+        shoot_film(film)
+        ss.f_board = None
+        st.rerun()
+
+
+def shoot_film(film: dict) -> None:
+    with st.status("🎬 Shooting your film…", expanded=True) as status:
+        tip = st.empty()
+        st.write(f"Filming {len(film['scenes'])} scenes, recording the voiceover and composing the score.")
+        jobs = {sc["key"]: (lambda sc=sc: shoot_scene(film["product_jpeg"], sc, film["tone"], film["aspect"],
+                                                      film["engine"])) for sc in film["scenes"]}
+        for sc in film["scenes"]:
+            if sc["vo"]:
+                jobs[f"vo:{sc['key']}"] = lambda sc=sc: studio.synthesize_voice(client, sc["vo"], film["voice"])
+        total = sum(s["seconds"] for s in film["scenes"]) + editor.END_CARD_SECONDS
+        jobs["music"] = lambda: studio.generate_music(
+            client, f"{film['music_prompt']}. About {total:.0f} seconds: build-up, climax, then a final hit",
+            context="a cinematic TV commercial")
+        res = run_parallel(jobs, status, "Filming", tip)
+        tip.empty()
+
+        failed = []
+        for sc in film["scenes"]:
+            r = res[sc["key"]]
+            if isinstance(r, studio.StudioError):
+                sc["error"] = str(r)
+                failed.append(sc["name"])
+            else:
+                sc.update(r)
+            vo = res.get(f"vo:{sc['key']}")
+            if vo and not isinstance(vo, studio.StudioError):
+                film["vo"][sc["key"]] = vo[0]
+        m = res["music"]
+        film["music"] = None if isinstance(m, studio.StudioError) else m[0]
+
+        status.update(label="✂️ Editing your film…")
+        try:
+            assemble_film(film)
+        except (editor.EditorError, StopIteration) as err:
+            st.error(str(err) or "No scenes were filmed.")
+        ok = film.get("final") is not None
+        if ok and not failed:
+            label = "🎉 Your film is ready!"
+        elif ok:
+            label = f"Film ready, but {len(failed)} scene(s) need a reshoot"
+        else:
+            label = "Filming didn't work. Try again in a minute."
+        status.update(label=label, state="complete" if ok else "error", expanded=False)
+    ss.films.insert(0, film)
+    ss.active_film = film["id"]
+    if film.get("final") and not failed:
+        st.balloons()
+
+
+def show_film(film: dict) -> None:
+    head, rm = st.columns([5, 1], vertical_alignment="center")
+    head.subheader(f"🎬 {film['title']}")
+    head.caption(f"{film['product']} · {studio.TONES[film['tone']]['name']} · {FILM_FORMATS[film['aspect']]}")
+    with rm.popover("🗑️ Delete", width="stretch"):
+        if st.button("Yes, delete this film", key=f"fdel-{film['id']}", type="primary"):
+            ss.films.remove(film)
+            ss.active_film = ss.films[0]["id"] if ss.films else None
+            st.rerun()
+    for sc in film["scenes"]:
+        if sc.get("error"):
+            st.warning(f"Scene “{sc['name']}” didn't film: {sc['error']} Use 🔁 Reshoot below.")
+
+    left, right = st.columns([3, 2] if film["aspect"] == "16:9" else [2, 3], gap="large")
+    with left:
+        if film.get("final"):
+            st.video(film["final"], format="video/mp4")
+            st.markdown("<span class='ai-pill'>AI-generated</span><span class='meta'>The label is in the video. "
+                        "Switch on the platform's AI toggle when posting.</span>", unsafe_allow_html=True)
+    with right:
+        if film.get("final"):
+            st.download_button("⬇ Download film", film["final"], type="primary", width="stretch",
+                               file_name=f"risus-{slug(film['title'])}-{film['aspect'].replace(':', 'x')}.mp4",
+                               mime="video/mp4", key=f"fdl-{film['id']}")
+        st.caption("Caption to post with it")
+        st.code(film_caption(film), language=None, wrap_lines=True)
+        with st.expander("🎚️ Sound & look"):
+            mix, k = film["mix"], film["id"]
+            new = {
+                "scene": st.slider("Scene sound effects", 0, 150, int(mix["scene"] * 100), 5, key=f"fm-s-{k}",
+                                   format="%d%%") / 100,
+                "voice": st.slider("Voiceover", 0, 150, int(mix["voice"] * 100), 5, key=f"fm-v-{k}",
+                                   format="%d%%") / 100,
+                "music": st.slider("Music", 0, 150, int(mix["music"] * 100), 5, key=f"fm-m-{k}",
+                                   format="%d%%") / 100,
+                "voice_on": st.toggle("Voiceover on", value=mix["voice_on"], key=f"fm-vo-{k}"),
+                "bars": st.toggle("Cinema bars", value=mix["bars"], key=f"fm-b-{k}",
+                                  disabled=film["aspect"] != "16:9", help="Widescreen movie look (16:9 only)"),
+            }
+            if st.button("✂️ Re-cut the film", key=f"fcut-{k}", width="stretch", disabled=new == mix):
+                film["mix"] = new
+                with st.spinner("Re-editing…"):
+                    try:
+                        assemble_film(film)
+                    except editor.EditorError as err:
+                        st.error(str(err))
+                st.rerun()
+        with st.expander("✅ Before you post"):
+            for c in CHECKLIST:
+                st.markdown(f"- {c}")
+
+    st.markdown("##### Scenes")
+    st.caption("Not happy with a shot? Reshoot just that scene and the film is re-edited automatically.")
+    cols = st.container(key="scenes").columns(len(film["scenes"]))
+    for i, (col, sc) in enumerate(zip(cols, film["scenes"])):
+        with col.container(border=True):
+            if sc.get("video"):
+                st.video(sc["video"], format="video/mp4", loop=True, autoplay=True, muted=True)
+            else:
+                st.error("Not filmed")
+            st.markdown(f"**{i + 1} · {sc['name']}** <span class='meta'>· {sc['seconds']}s</span>",
+                        unsafe_allow_html=True)
+            st.caption(f"🎙️ “{sc['vo']}”" if sc["vo"] else "🔇 No voiceover")
+            with st.popover("🔁 Reshoot", width="stretch"):
+                motion = st.text_area("Camera, action & sound", value=sc["motion"], key=f"rs-m-{film['id']}-{i}")
+                new_look = st.toggle("New image too", value=not sc.get("video"), key=f"rs-n-{film['id']}-{i}")
+                shot = st.text_area("What we see", value=sc["shot"], key=f"rs-s-{film['id']}-{i}",
+                                    disabled=not new_look)
+                if st.button("🎬 Reshoot this scene", type="primary", key=f"rs-go-{film['id']}-{i}"):
+                    sc["motion"], sc["shot"] = motion, shot
+                    with st.status(f"Reshooting “{sc['name']}”…", expanded=True) as status:
+                        tip = st.empty()
+                        r = run_parallel({"s": lambda: shoot_scene(film["product_jpeg"], sc, film["tone"],
+                                                                   film["aspect"], film["engine"], new_look)},
+                                         status, "Filming", tip)["s"]
+                        tip.empty()
+                        if isinstance(r, studio.StudioError):
+                            status.update(label=str(r), state="error")
+                        else:
+                            sc.update(r)
+                            status.update(label="✂️ Re-editing the film…")
+                            assemble_film(film)
+                            status.update(label="Scene reshot", state="complete")
+                    st.rerun()
+
+
+# ===========================================================================
 # 📈 MY RESULTS (sample data)
 # ===========================================================================
 SAMPLE_CREATORS = ["@lena.glow", "@dami.daily", "@sofia.finds", "@kai.unboxes", "@noor.home"]
@@ -996,6 +1395,9 @@ def sample_rows() -> pd.DataFrame:
             rows.append((f"{camp['product']} · {label}", it["kind"], it["id"]))
         for aspect in camp["finals"]:
             rows.append((f"{camp['product']} · {aspect} final ad", "final ad", f"{camp['id']}-{aspect}"))
+    for film in ss.get("films", []):
+        if film.get("final"):
+            rows.append((f"{film['title']} · cinematic ad", "film", film["id"]))
     if not rows:  # before anything is made
         rows = [(f"Sample ad {i + 1}", k, f"s{i}") for i, k in enumerate(["video", "image", "video", "image", "video"])]
     data = []
@@ -1055,6 +1457,6 @@ def page_results() -> None:
 
 
 # ---------------------------------------------------------------------------
-PAGES = {NAV[0]: page_create, NAV[1]: page_edit, NAV[2]: page_cut, NAV[3]: page_results}
+PAGES = {NAV[0]: page_create, NAV[1]: page_edit, NAV[2]: page_cut, NAV[3]: page_film, NAV[4]: page_results}
 PAGES[step]()
 persist()
