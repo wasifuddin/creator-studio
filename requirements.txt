@@ -1,0 +1,7 @@
+streamlit>=1.50
+google-genai>=2.0,<3
+pillow>=10.1
+requests>=2.31
+imageio-ffmpeg>=0.5
+altair>=5
+pandas>=2

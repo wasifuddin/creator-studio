@@ -1,0 +1,12 @@
+[theme]
+primaryColor = "#6d4aff"
+font = "sans serif"
+
+[server]
+maxUploadSize = 20
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "viewer"
